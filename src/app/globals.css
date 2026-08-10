@@ -1,26 +1,103 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-noir: #0f0e0c;
+  --color-surface: #1a1815;
+  --color-surface-2: #23201b;
+  --color-cream: #f5f0e8;
+  --color-champagne: #c9a961;
+  --color-champagne-light: #e4c88a;
+  --color-champagne-dark: #9c7f3d;
+  --color-muted: #8a8578;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  * { transition: color 0.5s ease, background-color 0.5s ease, border-color 0.5s ease, opacity 0.5s ease; }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background: #0f0e0c;
+    color: #f5f0e8;
+    overflow-x: hidden;
+    letter-spacing: 0.01em;
   }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: 'Cormorant Garamond', 'Playfair Display', serif;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+  }
+
+  .font-amharic { font-family: var(--font-amharic), sans-serif; }
+
+  /* Champagne gold text gradient */
+  .champagne-text {
+    background: linear-gradient(120deg, #e4c88a 0%, #c9a961 50%, #9c7f3d 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Champagne button */
+  .champagne-btn {
+    position: relative;
+    background: linear-gradient(120deg, #e4c88a, #c9a961);
+    color: #0f0e0c;
+    font-weight: 500;
+    padding: 1rem 2.25rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    border-radius: 2px;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .champagne-btn:hover {
+    box-shadow: 0 20px 40px rgba(201, 169, 97, 0.25);
+    transform: translateY(-2px);
+  }
+
+  /* Minimal glass */
+  .glass {
+    background: rgba(26, 24, 21, 0.6);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(201, 169, 97, 0.15);
+  }
+
+  /* Gold hairline divider */
+  .gold-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #c9a961 50%, transparent);
+  }
+
+  /* Elegant scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0f0e0c; }
+  ::-webkit-scrollbar-thumb { background: #c9a961; }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  .tracking-premium { letter-spacing: 0.3em; }
+  .text-balance { text-wrap: balance; }
+}
+
+/* Slow, elegant animations */
+@keyframes float-luxury {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-12px); }
+}
+.float-luxury { animation: float-luxury 8s ease-in-out infinite; }
+
+@keyframes slow-spin {
+  to { transform: rotate(360deg); }
+}
+.slow-spin { animation: slow-spin 30s linear infinite; }
+
+@keyframes shimmer-luxury {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-luxury {
+  animation: shimmer-luxury 2.5s linear infinite;
+  background: linear-gradient(90deg, rgba(201,169,97,0.02), rgba(201,169,97,0.08), rgba(201,169,97,0.02));
+  background-size: 200% 100%;
 }
