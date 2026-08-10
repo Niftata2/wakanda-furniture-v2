@@ -368,7 +368,7 @@ export default function AdminDashboard() {
                       return acc;
                     }, {})
                   )
-                    .sort((a, b) => b[1] - a[1])
+                       .sort((a: any, b: any) => b[1] - a[1])
                     .map(([type, count]: any) => (
                       <div key={type} className="flex items-center justify-between py-2 border-b border-cream/5">
                         <span className="text-cream/80 text-sm">{type}</span>

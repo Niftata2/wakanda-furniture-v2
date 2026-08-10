@@ -8,7 +8,6 @@ import Categories from '@/components/Categories';
 import Testimonials from '@/components/Testimonials';
 import ContactForm from '@/components/ContactForm';
 import Footer from '@/components/Footer';
-import QRCode from '@/components/QRCode';
 
 export default function Home() {
   return (
