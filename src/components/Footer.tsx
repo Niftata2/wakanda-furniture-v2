@@ -121,7 +121,7 @@ export default function Footer() {
           <p className="italic font-display normal-case text-xs tracking-normal">Crafted in Ethiopia. Made to last.</p>
         </div>
       </div>
-      <QRCode botUsername="WakandaaFurniture_Bot" />
+      
     </footer>
   );
 }
