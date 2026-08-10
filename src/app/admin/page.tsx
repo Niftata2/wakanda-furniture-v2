@@ -11,7 +11,6 @@ export default function AdminDashboard() {
   const [password, setPassword] = useState('');
   const [tab, setTab] = useState<Tab>('overview');
 
-  // Data
   const [leads, setLeads] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [messages, setMessages] = useState<any[]>([]);
@@ -134,7 +133,6 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-noir p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="flex justify-between items-center mb-8">
           <div>
             <h1 className="text-4xl font-display champagne-text">Admin Dashboard</h1>
@@ -146,7 +144,6 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-2 mb-8 overflow-x-auto">
           {tabs.map(t => (
             <button
@@ -160,7 +157,6 @@ export default function AdminDashboard() {
         </div>
 
         <AnimatePresence mode="wait">
-          {/* ───── OVERVIEW ───── */}
           {tab === 'overview' && (
             <motion.div key="o" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
@@ -190,7 +186,6 @@ export default function AdminDashboard() {
                 ))}
               </div>
 
-              {/* Recent Leads */}
               <div className="glass rounded-2xl p-6">
                 <h2 className="text-2xl font-display champagne-text mb-4">Recent Leads</h2>
                 <div className="space-y-3">
@@ -214,7 +209,6 @@ export default function AdminDashboard() {
             </motion.div>
           )}
 
-          {/* ───── LEADS ───── */}
           {tab === 'leads' && (
             <motion.div key="l" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <div className="glass rounded-2xl overflow-hidden">
@@ -272,7 +266,6 @@ export default function AdminDashboard() {
             </motion.div>
           )}
 
-          {/* ───── PRODUCTS ───── */}
           {tab === 'products' && (
             <motion.div key="p" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <form onSubmit={addProduct} className="glass rounded-2xl p-6 mb-6 grid md:grid-cols-2 gap-4">
@@ -327,7 +320,6 @@ export default function AdminDashboard() {
             </motion.div>
           )}
 
-          {/* ───── MESSAGES ───── */}
           {tab === 'messages' && (
             <motion.div key="m" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
               <div className="glass rounded-2xl overflow-x-auto">
@@ -355,20 +347,18 @@ export default function AdminDashboard() {
             </motion.div>
           )}
 
-          {/* ───── ANALYTICS ───── */}
           {tab === 'analytics' && (
             <motion.div key="a" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              {/* Event breakdown */}
               <div className="grid md:grid-cols-2 gap-6 mb-6">
                 <div className="glass rounded-2xl p-6">
                   <h3 className="text-xl font-display champagne-text mb-4">Events Breakdown</h3>
                   {Object.entries(
-                    analytics.reduce((acc: any, e) => {
+                    analytics.reduce((acc: Record<string, number>, e: any) => {
                       acc[e.event_type] = (acc[e.event_type] || 0) + 1;
                       return acc;
-                    }, {})
+                    }, {} as Record<string, number>)
                   )
-                       .sort((a: any, b: any) => b[1] - a[1])
+                    .sort((a: any, b: any) => Number(b[1]) - Number(a[1]))
                     .map(([type, count]: any) => (
                       <div key={type} className="flex items-center justify-between py-2 border-b border-cream/5">
                         <span className="text-cream/80 text-sm">{type}</span>
@@ -381,16 +371,16 @@ export default function AdminDashboard() {
                   <h3 className="text-xl font-display champagne-text mb-4">Top Viewed Products</h3>
                   {Object.entries(
                     analytics
-                      .filter(e => e.event_type === 'product_viewed' && e.product_id)
-                      .reduce((acc: any, e) => {
+                      .filter((e: any) => e.event_type === 'product_viewed' && e.product_id)
+                      .reduce((acc: Record<string, number>, e: any) => {
                         acc[e.product_id] = (acc[e.product_id] || 0) + 1;
                         return acc;
-                      }, {})
+                      }, {} as Record<string, number>)
                   )
-                    .sort((a, b) => b[1] - a[1])
+                    .sort((a: any, b: any) => Number(b[1]) - Number(a[1]))
                     .slice(0, 5)
                     .map(([productId, count]: any) => {
-                      const prod = products.find(p => p.id === productId);
+                      const prod = products.find((p: any) => p.id === productId);
                       return (
                         <div key={productId} className="flex items-center justify-between py-2 border-b border-cream/5">
                           <span className="text-cream/80 text-sm">{prod?.name || 'Unknown'}</span>
@@ -401,11 +391,10 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* Recent activity */}
               <div className="glass rounded-2xl p-6">
                 <h3 className="text-xl font-display champagne-text mb-4">Recent Activity</h3>
                 <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {analytics.slice(0, 50).map(e => (
+                  {analytics.slice(0, 50).map((e: any) => (
                     <div key={e.id} className="flex items-center justify-between py-2 px-3 bg-noir/50 rounded text-sm">
                       <div className="flex items-center gap-3">
                         <span className="text-muted text-xs font-mono">
