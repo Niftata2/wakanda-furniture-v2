@@ -142,10 +142,15 @@ async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promi
     prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n');
   } catch { /* db down, continue without products */ }
 
-  const systemPrompt = lang === 'am'
-    ? `You are a friendly sales assistant for Wakanda Furniture. Reply in Amharic. Under 3 sentences. 1-2 emojis. Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
-    : `You are a friendly sales assistant for Wakanda Furniture. Reply in English. Under 3 sentences. 1-2 emojis. Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
-
+    const systemPrompt = lang === 'am'
+    ? `You are a premium, friendly furniture sales consultant for Wakanda Furniture in Ethiopia. 
+       Speak natural Amharic. Never say "As an AI". Keep messages short (under 4 sentences) and use 1-2 emojis.
+       If they ask for furniture, ask about their budget, room size, or preferred style to give the best recommendation.
+       Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
+    : `You are a premium, friendly furniture sales consultant for Wakanda Furniture in Ethiopia. 
+       Speak natural English. Never say "As an AI". Keep messages short (under 4 sentences) and use 1-2 emojis.
+       If they ask for furniture, ask about their budget, room size, or preferred style to give the best recommendation.
+       Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
   try {
     const res = await withRetry(() => fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
