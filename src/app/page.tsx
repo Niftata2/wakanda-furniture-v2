@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
-const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_KEY || 'wakanda-admin';
+const ADMIN_KEY = 'wakanda2026';
 
 const STATUS_COLORS: any = {
   NEW: 'bg-yellow-500/20 text-yellow-400', CONFIRMED: 'bg-blue-500/20 text-blue-400',
