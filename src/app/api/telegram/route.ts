@@ -218,22 +218,26 @@ export async function POST(req: NextRequest) {
 
     await sendTyping(telegramId);
 
-    const user = await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username);
-    if (!user) return NextResponse.json({ ok: false });
-    const convo = await getOrCreateConversation(telegramId, user.id);
-    if (!convo) return NextResponse.json({ ok: false });
-
     const text = message.text || '';
     const lang = detectLanguage(text);
-    await supabase.from('conversations').update({ language: lang }).eq('id', convo.id);
 
-    // ── /start ──
+    // ── /start ── ALWAYS respond first, before touching the database
     if (text.startsWith('/start')) {
       const welcome = lang === 'am' ? '👋 እንኳን ደህና መጡ!' : '👋 Welcome to Wakanda Furniture!';
       await sendMessage(telegramId, welcome);
       await sendMessage(telegramId, lang === 'am' ? 'ምን ልርዳዎት?' : 'How can I help?', { reply_markup: mainMenuKeyboard(lang) });
+      
+      // Try to save the user in the background, but don't crash if it fails
+      try { await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username); } catch (e) {}
       return NextResponse.json({ ok: true });
     }
+
+    // For all other messages, we need the database to work
+    const user = await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username);
+    if (!user) return NextResponse.json({ ok: false });
+    const convo = await getOrCreateConversation(telegramId, user.id);
+    if (!convo) return NextResponse.json({ ok: false });
+    await supabase.from('conversations').update({ language: lang }).eq('id', convo.id);
 
     if (!text) return NextResponse.json({ ok: true });
     await saveMessage(convo.id, telegramId, text, 'incoming');
