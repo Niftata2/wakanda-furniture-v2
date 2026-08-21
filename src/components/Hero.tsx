@@ -38,7 +38,7 @@ export default function Hero() {
             transition={{ duration: 1.2, delay: 0.9 }}
             className="mt-10 text-lg text-muted max-w-md leading-relaxed"
           >
-            Hand-finished in our Addis Ababa atelier. Solid hardwood, Italian leather, 
+            Hand-finished in our Hawassa atelier. Solid hardwood, Italian leather, 
             and the patience of master craftsmen — built to outlive generations.
           </motion.p>
 
@@ -63,7 +63,7 @@ export default function Hero() {
           >
             <div>
               <p className="text-[10px] tracking-[0.3em] uppercase text-muted mb-2">Atelier</p>
-              <p className="text-sm text-cream">Addis Ababa</p>
+              <p className="text-sm text-cream">Hawassa, Ethiopia</p>
             </div>
             <div>
               <p className="text-[10px] tracking-[0.3em] uppercase text-muted mb-2">Since</p>
@@ -114,7 +114,7 @@ export default function Hero() {
                 </defs>
                 <text className="fill-champagne text-[7px] tracking-[0.25em] uppercase">
                   <textPath href="#seal">
-                    ATELIER • EST. 2014 • ADDIS ABABA • HANDCRAFTED •
+                    ATELIER • EST. 2014 • HAWASSA • HANDCRAFTED •
                   </textPath>
                 </text>
               </svg>
