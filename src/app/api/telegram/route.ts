@@ -92,7 +92,7 @@ async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promi
     : `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. Speak natural English. Be conversational and smooth. Never just say "Hello" if they already said hello. Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. Never say "As an AI". Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
 
   try {
-    const MODELS = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+        const MODELS = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
     for (const model of MODELS) {
       try {
         const res = await fetch(
