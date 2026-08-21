@@ -9,7 +9,6 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const OWNER_ID = process.env.OWNER_TELEGRAM_ID!;
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// ───── Retry wrapper ─────
 async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> {
   try { return await fn(); }
   catch (err) {
@@ -19,7 +18,6 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1000): Pr
   }
 }
 
-// ───── Helpers ─────
 async function sendMessage(chatId: number, text: string, options: any = {}) {
   await withRetry(() => fetch(`${TELEGRAM_API}/sendMessage`, {
     method: 'POST',
@@ -76,20 +74,14 @@ async function getOrCreateConversation(telegramId: number, userId: string) {
   return data;
 }
 
-async function saveMessage(conversationId: string, telegramId: number, content: string, direction: 'incoming' | 'outgoing') {
-  await supabase.from('messages').insert({
-    conversation_id: conversationId, telegram_id: telegramId, content, direction,
-  });
-}
-
 function detectLanguage(text: string): 'en' | 'am' {
-  return /[\u1200-\u137F]/.test(text) ? 'am' : 'en';
+  return /[ሀ-]/.test(text) ? 'am' : 'en';
 }
 
 function mainMenuKeyboard(lang: 'en' | 'am') {
   const items = lang === 'am'
     ? [['🛋️ የቤት ዕቃዎች', 'browse'], ['✨ ምክር', 'reco'], ['🛒 ትዕዛዝ', 'order'],
-       ['🎨 ልዩ ትዕዛዝ', 'custom'], ['💬 ጥያቄ', 'ask'], ['👨‍💼 ሰው', 'human'], ['🌐 ቋንቋ', 'lang']]
+       ['🎨 ዩ ትዕዛዝ', 'custom'], ['💬 ጥያቄ', 'ask'], ['👨‍💼 ው', 'human'], ['🌐 ንቋ', 'lang']]
     : [['🛋️ Browse Furniture', 'browse'], ['✨ Recommendations', 'reco'], ['🛒 Place Order', 'order'],
        ['🎨 Custom Furniture', 'custom'], ['💬 Ask Question', 'ask'], ['👨‍💼 Talk to Human', 'human'], ['🌐 Language', 'lang']];
   return { inline_keyboard: items.map(([t, d]) => [{ text: t, callback_data: d }]) };
@@ -119,9 +111,9 @@ ${icons[type] || '🔔'} <b>${type.toUpperCase().replace('_', ' ')}</b>
       inline_keyboard: [
         [
           user.username ? { text: '💬 Message', url: `https://t.me/${user.username}` } : { text: '💬 Message', url: `tg://user?id=${user.telegram_id}` },
-          { text: '✅ Contacted', callback_data: `mc_${lead.id}` },
+          { text: '✅ Contacted', callback_data: `mc_${lead.id || 'x'}` },
         ],
-        [{ text: '⭐ Qualified', callback_data: `mq_${lead.id}` }, { text: '❌ Close', callback_data: `ml_${lead.id}` }],
+        [{ text: '⭐ Qualified', callback_data: `mq_${lead.id || 'x'}` }, { text: '❌ Close', callback_data: `ml_${lead.id || 'x'}` }],
       ],
     },
   });
@@ -140,12 +132,15 @@ async function showProductCard(chatId: number, p: any, lang: 'en' | 'am') {
   });
 }
 
-async function generateAIResponse(userMessage: string, conversationId: string, lang: 'en' | 'am'): Promise<string> {
+async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promise<string> {
   const GEMINI_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_KEY) return lang === 'am' ? 'ሰላም!' : 'Hello!';
+  if (!GEMINI_KEY) return lang === 'am' ? 'ሰላም!' : 'Hello! How can I help you today?';
 
-  const products = await ProductService.getFeaturedProducts(8);
-  const prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n');
+  let prodList = '';
+  try {
+    const products = await ProductService.getFeaturedProducts(8);
+    prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n');
+  } catch { /* db down, continue without products */ }
 
   const systemPrompt = lang === 'am'
     ? `You are a friendly sales assistant for Wakanda Furniture. Reply in Amharic. Under 3 sentences. 1-2 emojis. Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
@@ -160,7 +155,7 @@ async function generateAIResponse(userMessage: string, conversationId: string, l
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || (lang === 'am' ? 'ሰላም!' : 'Hello!');
   } catch {
-    return lang === 'am' ? 'ይቅርታ፣ እባክዎ እንደገና ይሞክሩ።' : 'Sorry, please try again.';
+    return lang === 'am' ? 'ይቅርታ፣ እባክ እንደና ይክሩ' : 'Sorry, please try again.';
   }
 }
 
@@ -169,31 +164,105 @@ export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
 
-    // ── Callback queries ──
+    // ── Callback queries (button clicks) ──
     if (update.callback_query) {
       const { data, id: cbId } = update.callback_query;
       const from = update.callback_query.from;
       await answerCallback(cbId);
 
-      const user = await getOrCreateUser(from.id, from.first_name, from.last_name, from.username);
-      const convo = await getOrCreateConversation(from.id, user.id);
-      const lang = convo.language || 'en';
+      let lang: 'en' | 'am' = 'en';
+      let user: any = null;
+      let convo: any = null;
+      try {
+        user = await getOrCreateUser(from.id, from.first_name, from.last_name, from.username);
+        if (user) convo = await getOrCreateConversation(from.id, user.id);
+        if (convo?.language) lang = convo.language;
+      } catch { /* db down - continue anyway */ }
 
-      if (data === 'browse') {
-        const cats = await ProductService.getCategories();
-        await sendMessage(from.id, lang === 'am' ? '📂 ምድብ ይምረጡ:' : '📂 Choose a category:', {
-          reply_markup: { inline_keyboard: cats.map(c => [{ text: `${c.emoji} ${c.name}`, callback_data: `cat_${c.name}` }]) },
-        });
-      } else if (data.startsWith('cat_')) {
-        const prods = await ProductService.getProductsByCategory(data.replace('cat_', ''), 5);
-        for (const p of prods) await showProductCard(from.id, p, lang);
-      } else if (data.startsWith('mc_')) { await LeadService.updateLead(data.replace('mc_', ''), { status: 'contacted' }); await sendMessage(from.id, '✅'); }
-      else if (data.startsWith('mq_')) { await LeadService.updateLead(data.replace('mq_', ''), { status: 'qualified', priority: 'urgent' }); await sendMessage(from.id, '⭐'); }
-      else if (data.startsWith('ml_')) { await LeadService.updateLead(data.replace('ml_', ''), { status: 'lost' }); await sendMessage(from.id, '❌'); }
-      else if (data === 'lang') {
-        const newLang = lang === 'en' ? 'am' : 'en';
-        await supabase.from('conversations').update({ language: newLang }).eq('id', convo.id);
-        await sendMessage(from.id, newLang === 'am' ? '🌐 ቋንቋ ተቀየረ!' : '🌐 Language changed!');
+      const userInfo = user || { first_name: from.first_name, last_name: from.last_name || '', telegram_id: from.id, username: from.username };
+
+      try {
+        if (data === 'browse' || data === 'order') {
+          const cats = await ProductService.getCategories();
+          if (!cats || cats.length === 0) {
+            await sendMessage(from.id, lang === 'am' ? '😔 አሁን ምንም እቃ የለም። በቅርቡ ይመለሱ!' : '😔 No products available right now. Please check back soon!');
+          } else {
+            await sendMessage(from.id, lang === 'am' ? '📂 ድብ ይምረጡ:' : '📂 Choose a category:', {
+              reply_markup: { inline_keyboard: cats.map((c: any) => [{ text: `${c.emoji || '🛋️'} ${c.name}`, callback_data: `cat_${c.name}` }]) },
+            });
+          }
+        }
+        else if (data === 'reco') {
+          const prods = await ProductService.getFeaturedProducts(5);
+          if (!prods || prods.length === 0) {
+            await sendMessage(from.id, lang === 'am' ? '😔 ምክር በቅርቡ!' : '😔 Recommendations coming soon! Tap 🛋️ Browse Furniture meanwhile.');
+          } else {
+            await sendMessage(from.id, lang === 'am' ? '✨ ለእርስዎ የተመረጡ:' : '✨ Hand-picked for you:');
+            for (const p of prods) await showProductCard(from.id, p, lang);
+          }
+        }
+        else if (data === 'custom') {
+          await sendMessage(from.id, lang === 'am'
+            ? '🎨 ልዩ እቃዎን ይግለጹ: አይነት፣ መጠን፣ ቁቁስ እና ዘይቤ። እኛ እናዘጋጃለን!'
+            : '🎨 Describe your custom furniture: type, dimensions, material & style. Our craftsmen will bring it to life!');
+        }
+        else if (data === 'ask') {
+          await sendMessage(from.id, lang === 'am' ? '💬 ጥያቄዎን ይጻ — AI ይመልሳል!' : '💬 Type your question and our AI assistant will answer instantly!');
+        }
+        else if (data === 'human') {
+          try {
+            const lead = await LeadService.createLead({
+              telegram_user_id: user?.id || null, conversation_id: convo?.id || null,
+              telegram_id: from.id, customer_name: `${from.first_name} ${from.last_name || ''}`,
+              message: 'Requested to talk to a human', language: lang, priority: 'high', source: 'telegram',
+            });
+            if (lead) await notifyOwner(lead, userInfo, 'human_request');
+          } catch {
+            await notifyOwner({ product_name: null, message: 'Requested to talk to a human' }, userInfo, 'human_request');
+          }
+          await sendMessage(from.id, lang === 'am' ? '👨💼 ጥያቄዎ ተልኳል! ቡዙኙ በቅርቡ ያኝዎታል።' : '👨‍💼 Request sent! Our team will contact you shortly.');
+        }
+        else if (data.startsWith('cat_')) {
+          const prods = await ProductService.getProductsByCategory(data.replace('cat_', ''), 5);
+          if (!prods || prods.length === 0) {
+            await sendMessage(from.id, lang === 'am' ? '😔 በህ ድብ ንም የለም።' : '😔 No products in this category yet.');
+          } else {
+            for (const p of prods) await showProductCard(from.id, p, lang);
+          }
+        }
+        else if (data.startsWith('o_')) {
+          const p = await ProductService.getProductById(data.replace('o_', ''));
+          const name = p?.name || 'Item';
+          try {
+            const lead = await LeadService.createLead({
+              telegram_user_id: user?.id || null, conversation_id: convo?.id || null,
+              telegram_id: from.id, customer_name: `${from.first_name} ${from.last_name || ''}`,
+              product_name: name, message: `Order request for ${name}`, language: lang, priority: 'urgent', source: 'telegram',
+            });
+            if (lead) await notifyOwner(lead, userInfo, 'order_request');
+          } catch {
+            await notifyOwner({ product_name: name, message: `Order request for ${name}` }, userInfo, 'order_request');
+          }
+          await sendMessage(from.id, lang === 'am'
+            ? `✅ የ ${name} ትዛዝ ተቀብለናል! በቅርቡ እናገኝዎታል። 🙏`
+            : `✅ Order request for <b>${name}</b> received! Our team will contact you shortly. 🙏`);
+        }
+        else if (data.startsWith('a_')) {
+          const p = await ProductService.getProductById(data.replace('a_', ''));
+          await sendMessage(from.id, p
+            ? `💬 Ask anything about <b>${p.name}</b> — just type your question!`
+            : '💬 Type your question!');
+        }
+        else if (data.startsWith('mc_')) { try { await LeadService.updateLead(data.replace('mc_', ''), { status: 'contacted' }); } catch {} await sendMessage(from.id, '✅ Marked contacted'); }
+        else if (data.startsWith('mq_')) { try { await LeadService.updateLead(data.replace('mq_', ''), { status: 'qualified', priority: 'urgent' }); } catch {} await sendMessage(from.id, '⭐ Marked qualified'); }
+        else if (data.startsWith('ml_')) { try { await LeadService.updateLead(data.replace('ml_', ''), { status: 'lost' }); } catch {} await sendMessage(from.id, '❌ Closed'); }
+        else if (data === 'lang') {
+          const newLang = lang === 'en' ? 'am' : 'en';
+          try { if (convo) await supabase.from('conversations').update({ language: newLang }).eq('id', convo.id); } catch {}
+          await sendMessage(from.id, newLang === 'am' ? '🌐 ቋንቋ ወ አማርኛ ተቀይሯል!' : '🌐 Language changed to English!', { reply_markup: mainMenuKeyboard(newLang) });
+        }
+      } catch (e) {
+        await sendMessage(from.id, '⚠️ Something went wrong. Please try again in a moment.');
       }
 
       return NextResponse.json({ ok: true });
@@ -207,7 +276,6 @@ export async function POST(req: NextRequest) {
     const from = message.from;
     if (!from || from.is_bot) return NextResponse.json({ ok: true });
 
-    // ── Duplicate & rate limit protection ──
     if (RateLimitService.isDuplicate(message.message_id)) return NextResponse.json({ ok: true });
     const rateCheck = RateLimitService.isRateLimited(telegramId);
     if (rateCheck.limited) {
@@ -221,50 +289,41 @@ export async function POST(req: NextRequest) {
     const text = message.text || '';
     const lang = detectLanguage(text);
 
-    // ── /start ── ALWAYS respond first, before touching the database
+    // ── /start ── ALWAYS respond first
     if (text.startsWith('/start')) {
-      const welcome = lang === 'am' ? '👋 እንኳን ደህና መጡ!' : '👋 Welcome to Wakanda Furniture!';
-      await sendMessage(telegramId, welcome);
+      await sendMessage(telegramId, lang === 'am' ? '👋 እንን ደህና መጡ!' : '👋 Welcome to Wakanda Furniture!');
       await sendMessage(telegramId, lang === 'am' ? 'ምን ልርዳዎት?' : 'How can I help?', { reply_markup: mainMenuKeyboard(lang) });
-      
-      // Try to save the user in the background, but don't crash if it fails
-      try { await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username); } catch (e) {}
+      try { await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username); } catch {}
       return NextResponse.json({ ok: true });
     }
 
-    // For all other messages, we need the database to work
-    const user = await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username);
-    if (!user) return NextResponse.json({ ok: false });
-    const convo = await getOrCreateConversation(telegramId, user.id);
-    if (!convo) return NextResponse.json({ ok: false });
-    await supabase.from('conversations').update({ language: lang }).eq('id', convo.id);
-
     if (!text) return NextResponse.json({ ok: true });
-    await saveMessage(convo.id, telegramId, text, 'incoming');
 
-    // ── Intent classification ──
-    const intent = IntentService.classify(text, lang);
-    await IntentService.updateIntent(convo.id, telegramId, intent);
+    let user: any = null;
+    let convo: any = null;
+    try {
+      user = await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username);
+      if (user) convo = await getOrCreateConversation(telegramId, user.id);
+    } catch { /* db down */ }
 
-    // ── High-priority intents → create lead ──
-    if (IntentService.isHighPriority(intent)) {
-      const lead = await LeadService.createLead({
-        telegram_user_id: user.id,
-        conversation_id: convo.id,
-        telegram_id: telegramId,
-        customer_name: `${user.first_name} ${user.last_name || ''}`,
-        message: text,
-        language: lang,
-        priority: 'high',
-        source: 'telegram',
-      });
-      if (lead) await notifyOwner(lead, user, IntentService.getNotificationType(intent));
-    }
+    // ── Intent + lead creation (safe) ──
+    try {
+      const intent = IntentService.classify(text, lang);
+      if (convo) await IntentService.updateIntent(convo.id, telegramId, intent);
+      if (IntentService.isHighPriority(intent)) {
+        const userInfo = user || { first_name: from.first_name, last_name: from.last_name || '', telegram_id: telegramId, username: from.username };
+        const lead = await LeadService.createLead({
+          telegram_user_id: user?.id || null, conversation_id: convo?.id || null,
+          telegram_id: telegramId, customer_name: `${from.first_name} ${from.last_name || ''}`,
+          message: text, language: lang, priority: 'high', source: 'telegram',
+        });
+        if (lead) await notifyOwner(lead, userInfo, IntentService.getNotificationType(intent));
+      }
+    } catch { /* db down */ }
 
-    // ── AI response ──
-    const reply = await generateAIResponse(text, convo.id, lang);
+    // ── AI response (works even without DB) ──
+    const reply = await generateAIResponse(text, lang);
     await sendMessage(telegramId, reply);
-    await saveMessage(convo.id, telegramId, reply, 'outgoing');
 
     return NextResponse.json({ ok: true });
   } catch (error) {
