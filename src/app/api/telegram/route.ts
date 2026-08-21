@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { ProductService } from '@/services/product.service';
 import { LeadService } from '@/services/lead.service';
 import { RateLimitService } from '@/services/rate-limit.service';
+import { LeadScoreService } from '@/services/lead-score.service';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const OWNER_ID = process.env.OWNER_TELEGRAM_ID!;
@@ -272,8 +273,30 @@ export async function POST(req: NextRequest) {
     }
 
     if (!text) return NextResponse.json({ ok: true });
+    
 
     // ── AI CONSULTANT ──
+
+        // ── LEAD INTELLIGENCE (HOT / WARM / COLD) ──
+    try {
+      const score = LeadScoreService.score(text);
+      if (score.temp !== 'COLD') {
+        const lead = await LeadService.createLead({
+          telegram_user_id: user?.id || null, conversation_id: convo?.id || null, telegram_id: telegramId,
+          customer_name: `${from.first_name} ${from.last_name || ''}`, message: text, language: lang,
+          priority: score.temp === 'HOT' ? 'urgent' : 'normal', source: 'telegram',
+          budget_range: score.budget ? `${score.budget} ETB` : null,
+          delivery_location: score.location || null, product_name: score.interest || null,
+        });
+        try { if (lead?.id) await supabase.from('leads').update({ temperature: score.temp }).eq('id', lead.id); } catch {}
+
+        if (score.temp === 'HOT') {
+          await sendMessage(Number(OWNER_ID),
+            `🔥 <b>HOT LEAD DETECTED!</b>\n━━━━━━━━━━━━━━━━━━\n👤 ${from.first_name} ${from.last_name || ''}\n🛋️ Interested in: ${score.interest || 'Furniture'}\n💰 Est. budget: ${score.budget ? score.budget + ' ETB' : 'Unknown'}\n📍 Location: ${score.location || 'Unknown'}\n💬 "${text}"\n🆔 <code>${telegramId}</code>`,
+            { reply_markup: { inline_keyboard: [[{ text: '💬 Message Customer', url: `tg://user?id=${telegramId}` }]] } });
+        }
+      }
+    } catch {}
     const reply = await generateAIResponse(text, lang);
     await sendMessage(telegramId, reply);
 
