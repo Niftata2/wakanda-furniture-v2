@@ -79,36 +79,50 @@ async function getPhotoUrl(photo: any[]) {
 // 🧠 CLEAN AI BRAIN FUNCTION
 async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promise<string> {
   const GEMINI_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_KEY) return `⚠️ [DEBUG] GEMINI_API_KEY is missing in Vercel!`;
+  if (!GEMINI_KEY) return '⚠️ [DEBUG] GEMINI_API_KEY missing in Vercel!';
 
   let prodList = '';
-  try { 
-    const products = await ProductService.getFeaturedProducts(8); 
-    prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n'); 
+  try {
+    const products = await ProductService.getFeaturedProducts(8);
+    prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n');
   } catch {}
 
   const prompt = lang === 'am'
-    ? `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. Speak natural Amharic. Be conversational and smooth. Never just say "Hello" if they already said hello. Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. Never say "As an AI". Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
-    : `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. Speak natural English. Be conversational and smooth. Never just say "Hello" if they already said hello. Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. Never say "As an AI". Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
+    ? `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. Speak natural Amharic. Be conversational and smooth. Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. Never say "As an AI". Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
+    : `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. Speak natural English. Be conversational and smooth. Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. Never say "As an AI". Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
 
+  // 🧭 AUTO-DISCOVER which AI models are alive right now (never breaks again!)
+  let modelsToTry = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
+  const tried: string[] = [];
   try {
-        const MODELS = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
-    for (const model of MODELS) {
-      try {
-        const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
-        );
-        if (!res.ok) continue;
-        const data = await res.json();
-        const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (aiText) return aiText;
-      } catch { continue; }
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_KEY}&pageSize=200`);
+    if (listRes.ok) {
+      const list = await listRes.json();
+      const live: string[] = (list.models || []).map((m: any) => String(m.name || '').replace('models/', ''));
+      const favorites = ['gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3-flash', 'gemini-3-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
+      const matched = favorites.filter(f => live.includes(f));
+      if (matched.length > 0) modelsToTry = matched;
+      else {
+        const anyFlash = live.find(n => n.includes('flash'));
+        if (anyFlash) modelsToTry = [anyFlash];
+      }
     }
-    return '⚠️ [DEBUG] All AI models failed. Check API key.';
-  } catch (e: any) {
-    return `⚠️ [DEBUG] AI Brain Error: ${e.message}`;
+  } catch {}
+
+  for (const model of modelsToTry) {
+    tried.push(model);
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (aiText) return aiText;
+    } catch { continue; }
   }
+  return `⚠️ [DEBUG] Tried: ${tried.join(', ')} — all failed.`;
 }
 
 // ══════════ MAIN WEBHOOK ══════════
