@@ -78,17 +78,50 @@ async function getPhotoUrl(photo: any[]) {
 
 async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promise<string> {
   const GEMINI_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_KEY) return lang === 'am' ? 'ሰላም! እንዴት ልረዎ?' : 'Hello! How can I help you today?';
+  
+  // 🚨 DEBUG: If the key is missing, tell the owner exactly what's wrong!
+  if (!GEMINI_KEY) return `⚠️ [DEBUG] GEMINI_API_KEY is missing in Vercel Environment Variables! Please add it and redeploy.`;
+
   let prodList = '';
-  try { const products = await ProductService.getFeaturedProducts(8); prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n'); } catch {}
+  try { 
+    const products = await ProductService.getFeaturedProducts(8); 
+    prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n'); 
+  } catch {}
+
+  // 🧠 UPGRADED PROMPT: Makes the AI smooth, conversational, and smart
   const prompt = lang === 'am'
-    ? `You are a premium furniture consultant for Wakanda Furniture in Ethiopia. Reply in Amharic. Short messages (under 4 sentences), 1-2 emojis. Never say "As an AI". If they want to buy, guide them to tap 🛋️ Browse Furniture and use [🛒 Order This]. Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
-    : `You are a premium furniture consultant for Wakanda Furniture in Ethiopia. Reply in English. Short messages (under 4 sentences), 1-2 emojis. Never say "As an AI". If they want to buy, guide them to tap 🛋️ Browse Furniture and use [🛒 Order This]. Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
+    ? `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. 
+       Speak natural Amharic. Be conversational and smooth. Never just say "Hello" if they already said hello. 
+       Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. 
+       Never say "As an AI". 
+       Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
+    : `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. 
+       Speak natural English. Be conversational and smooth. Never just say "Hello" if they already said hello. 
+       Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. 
+       Never say "As an AI". 
+       Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
+
   try {
-    const res = await withRetry(() => fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }));
+    const res = await withRetry(() => fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, 
+      { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
+      }
+    ));
+    
+    if (!res.ok) throw new Error(`API returned ${res.status}`);
+    
     const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || (lang === 'am' ? 'ሰላም!' : 'Hello!');
-  } catch { return lang === 'am' ? 'ይቅርታ፣ እባክ እንደና ይክሩ' : 'Sorry, please try again in a moment.'; }
+    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!aiText) throw new Error('Empty AI response');
+    
+    return aiText;
+  } catch (e: any) {
+    // 🚨 DEBUG: If the API fails, show the exact error!
+    return `⚠️ [DEBUG] AI Brain Error: ${e.message}. Check your API key.`;
+  }
 }
 
 export async function POST(req: NextRequest) {
