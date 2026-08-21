@@ -3,7 +3,6 @@ import { supabase } from '@/lib/supabase';
 import { ProductService } from '@/services/product.service';
 import { LeadService } from '@/services/lead.service';
 import { RateLimitService } from '@/services/rate-limit.service';
-import { IntentService } from '@/services/intent.service';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const OWNER_ID = process.env.OWNER_TELEGRAM_ID!;
@@ -21,8 +20,12 @@ async function sendPhoto(chatId: number, photoUrl: string, caption: string, opti
   await withRetry(() => fetch(`${TELEGRAM_API}/sendPhoto`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, photo: photoUrl, caption, parse_mode: 'HTML', ...options }) }));
 }
 
-async function answerCallback(id: string, text = '') {
-  try { await fetch(`${TELEGRAM_API}/answerCallbackQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callback_query_id: id, text }) }); } catch {}
+async function sendTyping(chatId: number) {
+  try { await fetch(`${TELEGRAM_API}/sendChatAction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chat_id: chatId, action: 'typing' }) }); } catch {}
+}
+
+async function answerCallback(id: string) {
+  try { await fetch(`${TELEGRAM_API}/answerCallbackQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ callback_query_id: id }) }); } catch {}
 }
 
 async function getOrCreateUser(telegramId: number, first: string, last?: string, username?: string) {
@@ -39,11 +42,22 @@ async function getOrCreateConversation(telegramId: number, userId: string) {
   return data;
 }
 
+function detectLanguage(text: string): 'en' | 'am' { return /[\u1200-\u137F]/.test(text) ? 'am' : 'en'; }
+
 function mainMenuKeyboard(lang: 'en' | 'am') {
   const items = lang === 'am'
-    ? [['🛋️ የቤት ዕቃዎች', 'browse'], ['✨ ምክር', 'reco'], ['🛒 ትዕዛዝ', 'order'], ['🎨 ልዩ ትዕዛዝ', 'custom'], ['💬 ጥያቄ', 'ask'], ['👨‍💼 ሰው', 'human']]
-    : [['🛋️ Browse Furniture', 'browse'], ['✨ Recommendations', 'reco'], ['🛒 Place Order', 'order'], ['🎨 Custom Furniture', 'custom'], ['💬 Ask Question', 'ask'], ['👨‍💼 Talk to Human', 'human']];
+    ? [['🛋️ የቤት ዕቃች', 'browse'], ['✨ ምክር', 'reco'], ['🎨 ዩ ዕዛ', 'custom'], ['💬 ጥያቄ', 'ask'], ['👨‍💼 ሰው', 'human'], ['🌐 ቋንቋ', 'lang']]
+    : [['🛋️ Browse Furniture', 'browse'], ['✨ Recommendations', 'reco'], ['🎨 Custom Furniture', 'custom'], ['💬 Ask Question', 'ask'], ['👨‍💼 Talk to Human', 'human'], ['🌐 Language', 'lang']];
   return { inline_keyboard: items.map(([t, d]) => [{ text: t, callback_data: d }]) };
+}
+
+function orderPanel(orderId: string, status: string) {
+  const rows: any[] = [];
+  if (status === 'NEW') rows.push([{ text: '✅ Accept', callback_data: `acc_${orderId}` }, { text: '❌ Reject', callback_data: `rej_${orderId}` }]);
+  if (status === 'CONFIRMED') rows.push([{ text: '🔨 Start Production', callback_data: `proc_${orderId}` }, { text: '❌ Cancel', callback_data: `rej_${orderId}` }]);
+  if (status === 'IN_PRODUCTION') rows.push([{ text: '🚚 Out for Delivery', callback_data: `od_${orderId}` }]);
+  if (status === 'OUT_FOR_DELIVERY') rows.push([{ text: '✅ Mark Delivered', callback_data: `done_${orderId}` }]);
+  return { inline_keyboard: rows };
 }
 
 async function showProductCard(chatId: number, p: any, lang: 'en' | 'am') {
@@ -54,10 +68,33 @@ async function showProductCard(chatId: number, p: any, lang: 'en' | 'am') {
   });
 }
 
+async function getPhotoUrl(photo: any[]) {
+  const file_id = photo[photo.length - 1].file_id;
+  const res = await fetch(`${TELEGRAM_API}/getFile?file_id=${file_id}`);
+  const j = await res.json();
+  return `https://api.telegram.org/file/bot${BOT_TOKEN}/${j.result.file_path}`;
+}
+
+async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promise<string> {
+  const GEMINI_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_KEY) return lang === 'am' ? 'ሰላም! እንዴት ልረዎ?' : 'Hello! How can I help you today?';
+  let prodList = '';
+  try { const products = await ProductService.getFeaturedProducts(8); prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n'); } catch {}
+  const prompt = lang === 'am'
+    ? `You are a premium furniture consultant for Wakanda Furniture in Ethiopia. Reply in Amharic. Short messages (under 4 sentences), 1-2 emojis. Never say "As an AI". If they want to buy, guide them to tap 🛋️ Browse Furniture and use [🛒 Order This]. Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
+    : `You are a premium furniture consultant for Wakanda Furniture in Ethiopia. Reply in English. Short messages (under 4 sentences), 1-2 emojis. Never say "As an AI". If they want to buy, guide them to tap 🛋️ Browse Furniture and use [🛒 Order This]. Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
+  try {
+    const res = await withRetry(() => fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }));
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || (lang === 'am' ? 'ሰላም!' : 'Hello!');
+  } catch { return lang === 'am' ? 'ይቅርታ፣ እባክ እንደና ይክሩ' : 'Sorry, please try again in a moment.'; }
+}
+
 export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
 
+    // ══════════ CALLBACKS (BUTTONS) ══════════
     if (update.callback_query) {
       const { data, id: cbId } = update.callback_query;
       const from = update.callback_query.from;
@@ -68,49 +105,97 @@ export async function POST(req: NextRequest) {
         user = await getOrCreateUser(from.id, from.first_name, from.last_name, from.username);
         if (user) convo = await getOrCreateConversation(from.id, user.id);
       } catch {}
+      const lang: 'en' | 'am' = convo?.language || 'en';
+      const userInfo = user || { first_name: from.first_name, last_name: from.last_name || '', telegram_id: from.id, username: from.username };
 
-      // 🛒 START CHECKOUT
+      // ── OWNER ORDER MANAGEMENT ──
+      let orderId = ''; let newStatus = ''; let customerMsg = '';
+      if (data.startsWith('acc_')) { orderId = data.slice(4); newStatus = 'CONFIRMED'; customerMsg = '✅ Great news! Your order has been <b>confirmed</b> by our team. We will contact you shortly! 🙏'; }
+      else if (data.startsWith('rej_')) { orderId = data.slice(4); newStatus = 'CANCELLED'; customerMsg = '😔 Unfortunately your order was cancelled. If you have questions, tap Talk to Human — we are here to help.'; }
+      else if (data.startsWith('proc_')) { orderId = data.slice(5); newStatus = 'IN_PRODUCTION'; customerMsg = '🔨 Exciting! Your furniture is now <b>in production</b>. Our craftsmen are working on it.'; }
+      else if (data.startsWith('od_')) { orderId = data.slice(3); newStatus = 'OUT_FOR_DELIVERY'; customerMsg = '🚚 Your order is <b>out for delivery</b>! Please keep your phone nearby.'; }
+      else if (data.startsWith('done_')) { orderId = data.slice(5); newStatus = 'DELIVERED'; customerMsg = '🎉 Your order has been <b>delivered</b>! Thank you for choosing Wakanda Furniture. Enjoy!'; }
+
+      if (orderId) {
+        const { data: order } = await supabase.from('orders').update({ status: newStatus }).eq('id', orderId).select().single();
+        if (order?.customer_telegram_id) await sendMessage(order.customer_telegram_id, customerMsg);
+        await sendMessage(from.id, `📦 Order status: <b>${newStatus}</b>`);
+        if (newStatus !== 'CANCELLED' && newStatus !== 'DELIVERED') {
+          await sendMessage(from.id, lang === 'am' ? 'ቀይ እርምጃ:' : 'Next step:', { reply_markup: orderPanel(orderId, newStatus) });
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // ── START CHECKOUT ──
       if (data.startsWith('buy_')) {
-        const productId = data.replace('buy_', '');
         try {
-          await supabase.from('conversations').update({ checkout_step: 'awaiting_name', cart_product_id: productId }).eq('id', convo.id);
-          await sendMessage(from.id, "Great choice! 👍\n\nWhat name should I put on the order?");
+          await supabase.from('conversations').update({ checkout_step: 'awaiting_name', cart_product_id: data.replace('buy_', '') }).eq('id', convo.id);
+          await sendMessage(from.id, lang === 'am' ? 'ጥሩ ምርጫ! \n\nበትዕዛዙ ላይ ማን ስም ላስቀምጥ?' : "Great choice! 👍\n\nWhat name should I put on the order?");
         } catch {}
         return NextResponse.json({ ok: true });
       }
 
-      // ✅ CONFIRM ORDER
+      // ── CONFIRM ORDER ──
       if (data === 'confirm_order') {
         try {
           const { data: orderData } = await supabase.from('orders').insert({
             telegram_user_id: user.id, conversation_id: convo.id, product_id: convo.cart_product_id,
-            product_name: convo.order_product_name, customer_name: convo.order_name, customer_phone: convo.order_phone, delivery_location: convo.order_location
+            product_name: convo.order_product_name, customer_name: convo.order_name, customer_phone: convo.order_phone,
+            delivery_location: convo.order_location, customer_telegram_id: from.id
           }).select().single();
-
-          await supabase.from('conversations').update({ checkout_step: null, cart_product_id: null, order_name: null, order_phone: null, order_location: null }).eq('id', convo.id);
-          
-          await sendMessage(from.id, "✅ <b>Order Confirmed!</b>\n\nThank you! The Wakanda Furniture team has received your order and will contact you shortly to finalize delivery. 🙏");
-
-          // 🚨 NOTIFY OWNER
-          const ownerMsg = `🚨 <b>NEW ORDER RECEIVED!</b>\n━━━━━━━━━━━━━━━━━━\n🛋️ <b>${orderData.product_name}</b>\n\n👤 Customer: ${orderData.customer_name}\n📱 Phone: ${orderData.customer_phone}\n📍 Delivery: ${orderData.delivery_location}\n━━━━━━━━━━━━━━━━━━\n🆔 User ID: <code>${from.id}</code>\n👤 Username: ${from.username ? '@' + from.username : 'None'}\n\n[📞 Contact Customer](tg://user?id=${from.id})`;
-          await sendMessage(Number(OWNER_ID), ownerMsg, { reply_markup: { inline_keyboard: [[{ text: '✅ Accept', callback_data: `acc_${orderData.id}` }, { text: '❌ Reject', callback_data: `rej_${orderData.id}` }]] } });
-        } catch (e) { await sendMessage(from.id, "⚠️ Error saving order. Please contact support."); }
+          await supabase.from('conversations').update({ checkout_step: null, cart_product_id: null, order_name: null, order_phone: null, order_location: null, order_product_name: null }).eq('id', convo.id);
+          await sendMessage(from.id, lang === 'am' ? '✅ <b>ትዕዛዝዎ ረጋግጧል!</b>\n\nቡዙው በቅርቡ ያገኝታል። 🙏' : '✅ <b>Order Confirmed!</b>\n\nThe Wakanda Furniture team has received your order and will contact you shortly. 🙏');
+          const ownerMsg = `🚨 <b>NEW ORDER RECEIVED!</b>\n━━━━━━━━━━━━━━━━━━\n🛋️ <b>${orderData.product_name}</b>\n\n👤 Customer: ${orderData.customer_name}\n📱 Phone: ${orderData.customer_phone}\n📍 Delivery: ${orderData.delivery_location}\n━━━━━━━━━━━━━━━━━━\n🆔 User: <code>${from.id}</code>${from.username ? `\n👤 @${from.username}` : ''}`;
+          await sendMessage(Number(OWNER_ID), ownerMsg, { reply_markup: orderPanel(orderData.id, 'NEW') });
+        } catch { await sendMessage(from.id, '⚠️ Error saving order. Please try again or talk to our team.'); }
         return NextResponse.json({ ok: true });
       }
 
-      // (Keep other callbacks like browse, reco, custom, etc. here from previous code)
-      if (data === 'browse') {
-        const cats = await ProductService.getCategories();
-        await sendMessage(from.id, '📂 Choose a category:', { reply_markup: { inline_keyboard: cats.map((c: any) => [{ text: `${c.emoji || '🛋️'} ${c.name}`, callback_data: `cat_${c.name}` }]) } });
-      } else if (data.startsWith('cat_')) {
-        const prods = await ProductService.getProductsByCategory(data.replace('cat_', ''), 5);
-        for (const p of prods) await showProductCard(from.id, p, 'en');
-      }
+      // ── CATALOG & MENU ──
+      try {
+        if (data === 'browse' || data === 'order') {
+          const cats = await ProductService.getCategories();
+          if (!cats || cats.length === 0) await sendMessage(from.id, '😔 No products right now. Please check back soon!');
+          else await sendMessage(from.id, lang === 'am' ? '📂 ድብ ምረ:' : '📂 Choose a category:', { reply_markup: { inline_keyboard: cats.map((c: any) => [{ text: `${c.emoji || '🛋️'} ${c.name}`, callback_data: `cat_${c.name}` }]) } });
+        }
+        else if (data.startsWith('cat_')) {
+          const prods = await ProductService.getProductsByCategory(data.replace('cat_', ''), 5);
+          if (!prods || prods.length === 0) await sendMessage(from.id, '😔 No products in this category yet.');
+          for (const p of prods) await showProductCard(from.id, p, lang);
+        }
+        else if (data === 'reco') {
+          const prods = await ProductService.getFeaturedProducts(5);
+          if (!prods || prods.length === 0) await sendMessage(from.id, '😔 Recommendations coming soon!');
+          else { await sendMessage(from.id, lang === 'am' ? '✨ ለእርስዎ የተመረጡ:' : '✨ Hand-picked for you:'); for (const p of prods) await showProductCard(from.id, p, lang); }
+        }
+        else if (data === 'custom') {
+          await supabase.from('conversations').update({ checkout_step: 'custom_desc' }).eq('id', convo.id);
+          await sendMessage(from.id, lang === 'am'
+            ? '🎨 ዩ እ እናዘጃለን!\n\nምን እንደሚፈልጉ ይለ ወይም ፎቶ ይላኩ።'
+            : "🎨 We craft custom furniture!\n\nDescribe what you want (type, size, material, color) — or send me a photo of the design you love.");
+        }
+        else if (data === 'ask') {
+          await sendMessage(from.id, lang === 'am' ? '💬 ጥያቄዎን ይጻ — AI ይመልሳል!' : '💬 Type your question and our AI consultant will answer instantly!');
+        }
+        else if (data === 'human') {
+          try { await LeadService.createLead({ telegram_user_id: user?.id || null, conversation_id: convo?.id || null, telegram_id: from.id, customer_name: `${from.first_name} ${from.last_name || ''}`, message: 'Requested to talk to a human', language: lang, priority: 'high', source: 'telegram' }); } catch {}
+          try { await sendMessage(Number(OWNER_ID), `👨‍💼 <b>HUMAN SUPPORT REQUESTED</b>\n\n👤 ${from.first_name} ${from.last_name || ''}\n🆔 <code>${from.id}</code>${from.username ? `\n👤 @${from.username}` : ''}\n\n[💬 Open Chat](tg://user?id=${from.id})`); } catch {}
+          await sendMessage(from.id, lang === 'am' ? '👨‍💼 ጥያቄዎ ልኳል! ዙኙ በቅርቡ ያገኝዎታል።' : '👨‍ Of course! I have notified our team — they will contact you shortly. 👌');
+        }
+        else if (data === 'lang') {
+          const newLang = lang === 'en' ? 'am' : 'en';
+          try { await supabase.from('conversations').update({ language: newLang }).eq('id', convo.id); } catch {}
+          await sendMessage(from.id, newLang === 'am' ? '🌐 ቋንቋ ወ አማርኛ ተቀይሯል!' : '🌐 Language switched to English!', { reply_markup: mainMenuKeyboard(newLang) });
+        }
+        else if (data.startsWith('a_')) {
+          await sendMessage(from.id, lang === 'am' ? '💬 ስለዚህ እቃ ጥያቄዎን ይጻፉ!' : '💬 Type your question about this item — our AI consultant will answer!');
+        }
+      } catch { await sendMessage(from.id, '⚠️ Something went wrong. Please try again.'); }
 
       return NextResponse.json({ ok: true });
     }
 
-    // ── REGULAR MESSAGES ──
+    // ══════════ REGULAR MESSAGES ══════════
     const message = update.message;
     if (!message || !message.from || message.from.is_bot) return NextResponse.json({ ok: true });
 
@@ -118,56 +203,79 @@ export async function POST(req: NextRequest) {
     const from = message.from;
     const text = message.text || '';
 
+    if (RateLimitService.isDuplicate(message.message_id)) return NextResponse.json({ ok: true });
+    const rateCheck = RateLimitService.isRateLimited(telegramId);
+    if (rateCheck.limited) { await sendMessage(telegramId, `⏱️ Too many messages. Try again in ${rateCheck.retryAfter}s.`); return NextResponse.json({ ok: true }); }
+    if (RateLimitService.hasCooldown(telegramId)) return NextResponse.json({ ok: true });
+
+    await sendTyping(telegramId);
+
     let user: any = null; let convo: any = null;
     try {
       user = await getOrCreateUser(telegramId, from.first_name, from.last_name, from.username);
       if (user) convo = await getOrCreateConversation(telegramId, user.id);
     } catch {}
+    const lang: 'en' | 'am' = detectLanguage(text) || convo?.language || 'en';
 
     if (text.startsWith('/start')) {
-      if (convo) await supabase.from('conversations').update({ checkout_step: null }).eq('id', convo.id); // Reset checkout on /start
-      await sendMessage(telegramId, '👋 Welcome to Wakanda Furniture!\n\nI am your personal AI consultant. How can I help you today?', { reply_markup: mainMenuKeyboard('en') });
+      try { await supabase.from('conversations').update({ checkout_step: null }).eq('id', convo.id); } catch {}
+      await sendMessage(telegramId, lang === 'am' ? '👋 እንኳን ደህና መጡ!\n\nእኔ የ Wakanda Furniture ግላዊ AI አማካሪ ነኝ' : ' Welcome to Wakanda Furniture!\n\nI am your personal AI furniture consultant. How can I help you today?', { reply_markup: mainMenuKeyboard(lang) });
       return NextResponse.json({ ok: true });
     }
 
-    // 🛒 SMART CHECKOUT STATE MACHINE
-    if (convo?.checkout_step) {
+    // ── SMART CHECKOUT STATE MACHINE ──
+    if (convo?.checkout_step && convo.checkout_step !== 'custom_desc') {
       if (convo.checkout_step === 'awaiting_name') {
         await supabase.from('conversations').update({ checkout_step: 'awaiting_phone', order_name: text }).eq('id', convo.id);
-        await sendMessage(telegramId, `Perfect, <b>${text}</b>.\n\nAnd what phone number should our team use to contact you?`);
+        await sendMessage(telegramId, `Perfect, <b>${text}</b>. 📝\n\nAnd what phone number should our team use to contact you?`);
         return NextResponse.json({ ok: true });
       }
       if (convo.checkout_step === 'awaiting_phone') {
         await supabase.from('conversations').update({ checkout_step: 'awaiting_location', order_phone: text }).eq('id', convo.id);
-        await sendMessage(telegramId, "Got it. 📱\n\nWhere should we deliver it? (e.g., Bole, Hawassa, or specific area)");
+        await sendMessage(telegramId, 'Got it. 📱\n\nWhere should we deliver it? (e.g., Bole, Hawassa, or your specific area)');
         return NextResponse.json({ ok: true });
       }
       if (convo.checkout_step === 'awaiting_location') {
         const product = await ProductService.getProductById(convo.cart_product_id);
         await supabase.from('conversations').update({ checkout_step: 'awaiting_confirm', order_location: text, order_product_name: product?.name || 'Custom Item' }).eq('id', convo.id);
-        
         const summary = `━━━━━━━━━━━━━━━━━━\n🛋️ <b>WAKANDA FURNITURE</b>\n<b>Order Summary</b>\n\nProduct:\n${product?.name || 'Item'}\n\nPrice:\n${product?.price?.toLocaleString() || '—'} ETB\n\nCustomer:\n${convo.order_name}\n\nPhone:\n${convo.order_phone}\n\nDelivery:\n${text}\n━━━━━━━━━━━━━━━━━━`;
-        
         await sendMessage(telegramId, summary, { reply_markup: { inline_keyboard: [[{ text: '✅ Confirm Order', callback_data: 'confirm_order' }, { text: '❌ Cancel', callback_data: 'browse' }]] } });
         return NextResponse.json({ ok: true });
       }
     }
 
-    // 🧠 AI CONSULTANT FALLBACK
-    const GEMINI_KEY = process.env.GEMINI_API_KEY;
-    if (GEMINI_KEY && text) {
-      let prodList = '';
-      try { const products = await ProductService.getFeaturedProducts(8); prodList = products.map(p => `- ${p.name}: ${p.price?.toLocaleString()} ETB`).join('\n'); } catch {}
-      
-      const prompt = `You are a premium furniture sales consultant for Wakanda Furniture in Ethiopia. Speak natural English. Keep messages short (under 4 sentences). If they want to buy, tell them to click the [Order This] button on the product. Available Products:\n${prodList}\n\nCustomer: ${text}\nResponse:`;
-      
+    // ── CUSTOM FURNITURE (TEXT OR PHOTO) ──
+    if (convo?.checkout_step === 'custom_desc' && (text || message.photo)) {
+      let photoUrl = '';
+      if (message.photo) { try { photoUrl = await getPhotoUrl(message.photo); } catch {} }
+      try { await LeadService.createLead({ telegram_user_id: user?.id || null, conversation_id: convo?.id || null, telegram_id: telegramId, customer_name: `${from.first_name} ${from.last_name || ''}`, message: text || 'Sent a custom furniture photo', language: lang, priority: 'high', source: 'telegram' }); } catch {}
+      const ownerCaption = `🎨 <b>CUSTOM FURNITURE REQUEST</b>\n\n👤 ${from.first_name} ${from.last_name || ''}\n🆔 <code>${telegramId}</code>${from.username ? `\n👤 @${from.username}` : ''}\n\n💬 ${text || '(photo only)'}`;
       try {
-        const res = await withRetry(() => fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }));
-        const data = await res.json();
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || 'Let me connect you with our team!';
-        await sendMessage(telegramId, reply);
-      } catch { await sendMessage(telegramId, 'Sorry, I am having trouble connecting right now. Please try again.'); }
+        if (photoUrl) await sendPhoto(Number(OWNER_ID), photoUrl, ownerCaption);
+        else await sendMessage(Number(OWNER_ID), ownerCaption);
+      } catch {}
+      await supabase.from('conversations').update({ checkout_step: null }).eq('id', convo.id);
+      await sendMessage(telegramId, lang === 'am'
+        ? '🎨 ተቀብለናል! ቡኙ ዋ እና ምት አዘጋጅቶ በቅርቡ ያኝዎታል። '
+        : "🎨 Received! Our craftsmen will review it and our team will get back to you with a quotation shortly. 🙏");
+      return NextResponse.json({ ok: true });
     }
+
+    // ── CUSTOMER SENDS A PHOTO (any time) ──
+    if (message.photo) {
+      try {
+        const photoUrl = await getPhotoUrl(message.photo);
+        await sendPhoto(Number(OWNER_ID), photoUrl, `📸 <b>CUSTOMER SENT A PHOTO</b>\n\n👤 ${from.first_name} ${from.last_name || ''}\n🆔 <code>${telegramId}</code>${from.username ? `\n👤 @${from.username}` : ''}\n💬 ${text || ''}`);
+      } catch {}
+      await sendMessage(telegramId, lang === 'am' ? '📸 ቶን አይለሁ! ዙኙ በቅርቡ ይመልሳል።' : "📸 I've shared your photo with our design team! They'll get back to you shortly. 👌");
+      return NextResponse.json({ ok: true });
+    }
+
+    if (!text) return NextResponse.json({ ok: true });
+
+    // ── AI CONSULTANT ──
+    const reply = await generateAIResponse(text, lang);
+    await sendMessage(telegramId, reply);
 
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -175,4 +283,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }
+
 export const runtime = 'nodejs';
