@@ -76,11 +76,10 @@ async function getPhotoUrl(photo: any[]) {
   return `https://api.telegram.org/file/bot${BOT_TOKEN}/${j.result.file_path}`;
 }
 
+// 🧠 CLEAN AI BRAIN FUNCTION
 async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promise<string> {
   const GEMINI_KEY = process.env.GEMINI_API_KEY;
-  
-  // 🚨 DEBUG: If the key is missing, tell the owner exactly what's wrong!
-  if (!GEMINI_KEY) return `⚠️ [DEBUG] GEMINI_API_KEY is missing in Vercel Environment Variables! Please add it and redeploy.`;
+  if (!GEMINI_KEY) return `⚠️ [DEBUG] GEMINI_API_KEY is missing in Vercel!`;
 
   let prodList = '';
   try { 
@@ -88,47 +87,35 @@ async function generateAIResponse(userMessage: string, lang: 'en' | 'am'): Promi
     prodList = products.map(p => `- ${p.name} (${p.category}): ${p.price?.toLocaleString()} ETB`).join('\n'); 
   } catch {}
 
-  // 🧠 UPGRADED PROMPT: Makes the AI smooth, conversational, and smart
   const prompt = lang === 'am'
-    ? `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. 
-       Speak natural Amharic. Be conversational and smooth. Never just say "Hello" if they already said hello. 
-       Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. 
-       Never say "As an AI". 
-       Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
-    : `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. 
-       Speak natural English. Be conversational and smooth. Never just say "Hello" if they already said hello. 
-       Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. 
-       Never say "As an AI". 
-       Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
+    ? `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. Speak natural Amharic. Be conversational and smooth. Never just say "Hello" if they already said hello. Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. Never say "As an AI". Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`
+    : `You are a premium, friendly furniture consultant for Wakanda Furniture in Ethiopia. Speak natural English. Be conversational and smooth. Never just say "Hello" if they already said hello. Answer their specific question directly. Keep it under 4 sentences. Use 1-2 emojis. Never say "As an AI". Available Products:\n${prodList}\n\nCustomer: ${userMessage}\nResponse:`;
 
   try {
-    const res = await withRetry(() => fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`, 
-      { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) 
-      }
-    ));
-    
-    if (!res.ok) throw new Error(`API returned ${res.status}`);
-    
-    const data = await res.json();
-    const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!aiText) throw new Error('Empty AI response');
-    
-    return aiText;
+    const MODELS = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'];
+    for (const model of MODELS) {
+      try {
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_KEY}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
+        );
+        if (!res.ok) continue;
+        const data = await res.json();
+        const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (aiText) return aiText;
+      } catch { continue; }
+    }
+    return '⚠️ [DEBUG] All AI models failed. Check API key.';
   } catch (e: any) {
-    // 🚨 DEBUG: If the API fails, show the exact error!
-    return `⚠️ [DEBUG] AI Brain Error: ${e.message}. Check your API key.`;
+    return `⚠️ [DEBUG] AI Brain Error: ${e.message}`;
   }
 }
 
+// ══════════ MAIN WEBHOOK ══════════
 export async function POST(req: NextRequest) {
   try {
     const update = await req.json();
 
-    // ══════════ CALLBACKS (BUTTONS) ══════════
     if (update.callback_query) {
       const { data, id: cbId } = update.callback_query;
       const from = update.callback_query.from;
@@ -142,7 +129,6 @@ export async function POST(req: NextRequest) {
       const lang: 'en' | 'am' = convo?.language || 'en';
       const userInfo = user || { first_name: from.first_name, last_name: from.last_name || '', telegram_id: from.id, username: from.username };
 
-      // ── OWNER ORDER MANAGEMENT ──
       let orderId = ''; let newStatus = ''; let customerMsg = '';
       if (data.startsWith('acc_')) { orderId = data.slice(4); newStatus = 'CONFIRMED'; customerMsg = '✅ Great news! Your order has been <b>confirmed</b> by our team. We will contact you shortly! 🙏'; }
       else if (data.startsWith('rej_')) { orderId = data.slice(4); newStatus = 'CANCELLED'; customerMsg = '😔 Unfortunately your order was cancelled. If you have questions, tap Talk to Human — we are here to help.'; }
@@ -160,7 +146,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // ── START CHECKOUT ──
       if (data.startsWith('buy_')) {
         try {
           await supabase.from('conversations').update({ checkout_step: 'awaiting_name', cart_product_id: data.replace('buy_', '') }).eq('id', convo.id);
@@ -169,7 +154,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // ── CONFIRM ORDER ──
       if (data === 'confirm_order') {
         try {
           const { data: orderData } = await supabase.from('orders').insert({
@@ -185,7 +169,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true });
       }
 
-      // ── CATALOG & MENU ──
       try {
         if (data === 'browse' || data === 'order') {
           const cats = await ProductService.getCategories();
@@ -214,7 +197,7 @@ export async function POST(req: NextRequest) {
         else if (data === 'human') {
           try { await LeadService.createLead({ telegram_user_id: user?.id || null, conversation_id: convo?.id || null, telegram_id: from.id, customer_name: `${from.first_name} ${from.last_name || ''}`, message: 'Requested to talk to a human', language: lang, priority: 'high', source: 'telegram' }); } catch {}
           try { await sendMessage(Number(OWNER_ID), `👨‍💼 <b>HUMAN SUPPORT REQUESTED</b>\n\n👤 ${from.first_name} ${from.last_name || ''}\n🆔 <code>${from.id}</code>${from.username ? `\n👤 @${from.username}` : ''}\n\n[💬 Open Chat](tg://user?id=${from.id})`); } catch {}
-          await sendMessage(from.id, lang === 'am' ? '👨‍💼 ጥያቄዎ ልኳል! ዙኙ በቅርቡ ያገኝዎታል።' : '👨‍ Of course! I have notified our team — they will contact you shortly. 👌');
+          await sendMessage(from.id, lang === 'am' ? '👨‍💼 ጥያቄዎ ልኳል! ዙኙ በቅርቡ ያገኝዎታል።' : '👨‍💼 Of course! I have notified our team — they will contact you shortly. 👌');
         }
         else if (data === 'lang') {
           const newLang = lang === 'en' ? 'am' : 'en';
@@ -229,7 +212,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ══════════ REGULAR MESSAGES ══════════
     const message = update.message;
     if (!message || !message.from || message.from.is_bot) return NextResponse.json({ ok: true });
 
@@ -257,7 +239,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── SMART CHECKOUT STATE MACHINE ──
     if (convo?.checkout_step && convo.checkout_step !== 'custom_desc') {
       if (convo.checkout_step === 'awaiting_name') {
         await supabase.from('conversations').update({ checkout_step: 'awaiting_phone', order_name: text }).eq('id', convo.id);
@@ -278,7 +259,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── CUSTOM FURNITURE (TEXT OR PHOTO) ──
     if (convo?.checkout_step === 'custom_desc' && (text || message.photo)) {
       let photoUrl = '';
       if (message.photo) { try { photoUrl = await getPhotoUrl(message.photo); } catch {} }
@@ -295,7 +275,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // ── CUSTOMER SENDS A PHOTO (any time) ──
     if (message.photo) {
       try {
         const photoUrl = await getPhotoUrl(message.photo);
@@ -306,11 +285,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (!text) return NextResponse.json({ ok: true });
-    
 
-    // ── AI CONSULTANT ──
-
-        // ── LEAD INTELLIGENCE (HOT / WARM / COLD) ──
+    // ── LEAD INTELLIGENCE (HOT / WARM / COLD) ──
     try {
       const score = LeadScoreService.score(text);
       if (score.temp !== 'COLD') {
@@ -330,6 +306,8 @@ export async function POST(req: NextRequest) {
         }
       }
     } catch {}
+
+    // ── AI CONSULTANT ──
     const reply = await generateAIResponse(text, lang);
     await sendMessage(telegramId, reply);
 
